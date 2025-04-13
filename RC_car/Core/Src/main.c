@@ -1,172 +1,113 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
-#include "main.h"
+#include <STM32F103XB.h>
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
+void Set_up();
+void delay100();
+void PWM_Config1();
+void PWM_Config2();
+void DcMotor_Control(int motorId, int direction, int speed);
 
-/* USER CODE END Includes */
+int main() {
 
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
+	Set_up();
 
-/* USER CODE END PTD */
+	while (1) {
 
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
+		DcMotor_Control(2, 1, 50);
+		for (int i = 0; i <= 50; i++) {
+			delay100();
+		}
+		DcMotor_Control(2, 1, 100);
+		for (int i = 0; i <= 50; i++) {
+			delay100();
+		}
+		DcMotor_Control(2, 1, 0);
+		for (int i = 0; i <= 50; i++) {
+			delay100();
+		}
 
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
-
-/* USER CODE BEGIN PV */
-
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-int main(void)
-{
-
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  /* USER CODE BEGIN 2 */
-
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
-  /* USER CODE END 3 */
+	}
 }
 
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
-void SystemClock_Config(void)
-{
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+void Set_up() {
+	// === Enable Clocks ===
+	RCC->APB2ENR |= (1 << 0);    // AFIO
+	RCC->APB2ENR |= (1 << 2);    // GPIOA
+	RCC->APB2ENR |= (1 << 3);    // GPIOB
+	RCC->APB2ENR |= (1 << 9);    // ADC1
+	RCC->APB2ENR |= (1 << 11);	 // Timer1 (Delay)
+	RCC->APB1ENR |= (1 << 0);    // Timer2 (PWM motor 1)
+	RCC->APB1ENR |= (1 << 1);    // Timer3 (PWM motor 2)
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
+	// === Disable AFIO Remap for TIM3 CH1 on PA6 ===
+	AFIO->MAPR &= ~(1 << 8);     // No remap
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+	// === GPIO Configuration ===
+	GPIOA->CRL = 0x4B44444B;		//PA0 output motor1
+									//PA6 output motor2
+	GPIOA->CRH = 0x44443344;//PA10-PA11 output push-pull for the dir. of motor1
+	GPIOB->CRL = 0x44444444;
+	GPIOB->CRH = 0x44443344;//PB10-PB11 output push-pull for the dir. of motor2
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
-  {
-    Error_Handler();
-  }
+	PWM_Config1();
+	PWM_Config2();
+
 }
 
-/* USER CODE BEGIN 4 */
+void DcMotor_Control(int motorId, int direction, int speed) {
 
-/* USER CODE END 4 */
+	if (motorId == 1) {							// left motor
+		if (direction == 1) {					//clockwise
+			GPIOA->ODR |= (1 << 10);			//IN1
+			GPIOA->ODR &= ~(1 << 11);			//IN2
+		} else {								//anti-clockwise
+			GPIOA->ODR &= ~(1 << 10);
+			GPIOA->ODR |= (1 << 11);
+		}
+		TIM2->CCR1 = speed * 40;			//Duty Cycle
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
-void Error_Handler(void)
-{
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
+	} else {
+		if (direction == 1) {					//clockwise
+			GPIOB->ODR |= (1 << 10);
+			GPIOB->ODR &= ~(1 << 11);
+		} else {								//anti-clockwise
+			GPIOB->ODR &= ~(1 << 10);			//IN1
+			GPIOB->ODR |= (1 << 11);			//IN2
+		}
+		TIM3->CCR1 = speed * 40;			//Duty Cycle
+
+	}
 }
 
-#ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
-void assert_failed(uint8_t *file, uint32_t line)
-{
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
+void delay100() {       //100ms
+	TIM1->PSC = 9999;
+	TIM1->ARR = 79;
+	TIM1->SR = 0;
+	TIM1->CR1 = 1;
+	while ((TIM1->SR & 1) == 0)
+		;
+	TIM1->CR1 = 0;
 }
-#endif /* USE_FULL_ASSERT */
+
+void PWM_Config1() {
+	TIM2->CCER |= (1 << 0); 				// Enable CH1 output (PA0)
+	TIM2->CCMR1 |= (0b110 << 4); 			// PWM Mode 1
+	TIM2->CCMR1 |= (1 << 3); 				// Preload enable
+	TIM2->CR1 |= (1 << 7); 					// ARPE enable
+	TIM2->CR1 |= (0b10 << 5); 				// Center-aligned mode 2
+	TIM2->ARR = 4000; 						// Auto-reload (period)
+	TIM2->CCR1 = 0; 						// Start at 0% duty
+	TIM2->EGR |= (1 << 0); 					// Update registers
+	TIM2->CR1 |= (1 << 0); 					// Start TIM3
+}
+
+void PWM_Config2() {
+	TIM3->CCER |= (1 << 0); 				// Enable CH1 output (PA6)
+	TIM3->CCMR1 |= (0b110 << 4); 			// PWM Mode 1
+	TIM3->CCMR1 |= (1 << 3); 				// Preload enable
+	TIM3->CR1 |= (1 << 7); 					// ARPE enable
+	TIM3->CR1 |= (0b10 << 5); 				// Center-aligned mode 2
+	TIM3->ARR = 4000; 						// Auto-reload (period)
+	TIM3->CCR1 = 0; 						// Start at 0% duty
+	TIM3->EGR |= (1 << 0); 					// Update registers
+	TIM3->CR1 |= (1 << 0); 					// Start TIM3
+}
