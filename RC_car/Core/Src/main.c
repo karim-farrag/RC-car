@@ -1,29 +1,25 @@
 #include <STM32F103XB.h>
 
 void Set_up();
-void delay100();
+void delay100ms();
 void PWM_Config1();
 void PWM_Config2();
+void delay_us(int us);
+int UltraSonic_GetDistance(int sensorId);
 void DcMotor_Control(int motorId, int direction, int speed);
 
 int main() {
-
 	Set_up();
 
 	while (1) {
+		int s = UltraSonic_GetDistance(1);
+		if (s>=0 && s<=400){
+			DcMotor_Control(1, 1, s/4);
+		}
+		else{
+			DcMotor_Control(1, 1, 0);
+		}
 
-		DcMotor_Control(2, 1, 50);
-		for (int i = 0; i <= 50; i++) {
-			delay100();
-		}
-		DcMotor_Control(2, 1, 100);
-		for (int i = 0; i <= 50; i++) {
-			delay100();
-		}
-		DcMotor_Control(2, 1, 0);
-		for (int i = 0; i <= 50; i++) {
-			delay100();
-		}
 
 	}
 }
@@ -46,7 +42,11 @@ void Set_up() {
 									//PA6 output motor2
 	GPIOA->CRH = 0x44443344;//PA10-PA11 output push-pull for the dir. of motor1
 	GPIOB->CRL = 0x44444444;
-	GPIOB->CRH = 0x44443344;//PB10-PB11 output push-pull for the dir. of motor2
+	GPIOB->CRH = 0x34343344;//PB10-PB11 output push-pull for the dir. of motor2
+							//PB12 input floating ( ultrasonic1 echo )
+							//PB13 output push-pull ( ultrasonic1 trig )
+							//PB14 input floating ( ultrasonic2 echo )
+							//PB15 output push-pull ( ultrasonic2 trig )
 
 	PWM_Config1();
 	PWM_Config2();
@@ -78,9 +78,20 @@ void DcMotor_Control(int motorId, int direction, int speed) {
 	}
 }
 
-void delay100() {       //100ms
+void delay100ms() {       //100ms
 	TIM1->PSC = 9999;
 	TIM1->ARR = 79;
+	TIM1->SR = 0;
+	TIM1->CR1 = 1;
+	while ((TIM1->SR & 1) == 0)
+		;
+	TIM1->CR1 = 0;
+}
+
+void delay_us(int us) {
+	TIM1->CNT = 0;
+	TIM1->PSC = 8 - 1;
+	TIM1->ARR = us - 1;
 	TIM1->SR = 0;
 	TIM1->CR1 = 1;
 	while ((TIM1->SR & 1) == 0)
@@ -110,4 +121,65 @@ void PWM_Config2() {
 	TIM3->CCR1 = 0; 						// Start at 0% duty
 	TIM3->EGR |= (1 << 0); 					// Update registers
 	TIM3->CR1 |= (1 << 0); 					// Start TIM3
+}
+
+int UltraSonic_GetDistance(int sensorId) {
+
+	if (sensorId == 1) {
+		GPIOB->ODR |= (1 << 13);			//trig1 ON
+		delay_us(10);
+		GPIOB->ODR &= ~(1 << 13);			//trig1 OFF
+		TIM1->PSC = 8 - 1;
+		TIM1->CNT = 0;
+		int counter = 0;
+
+		while (!(GPIOB->IDR & (1 << 12))) {
+			counter++;
+			if (counter == 1000000) {
+				return 1000;
+			}
+		};
+		TIM1->CR1 |= (1 << 0);
+		counter = 0;
+		while ((GPIOB->IDR & (1 << 12))) {
+			counter++;
+			if (counter == 1000000) {
+				return 1000;
+			}
+		};
+		int duration = TIM1->CNT;					//in us
+		int distance = (duration * 343) / 20000;
+		TIM1->CR1 = 0;
+		return distance;
+
+	}
+
+	else {
+		GPIOB->ODR |= (1 << 15);
+		delay_us(10);
+		GPIOB->ODR &= ~(1 << 15);
+		TIM1->PSC = 8 - 1;
+		TIM1->CNT = 0;
+		int counter = 0;
+
+		while (!(GPIOB->IDR & (1 << 14))) {
+			counter++;
+			if (counter == 1000000) {
+				return 1000;
+			}
+		};
+		TIM1->CR1 |= (1 << 0);
+		counter = 0;
+		while ((GPIOB->IDR & (1 << 14))) {
+			counter++;
+			if (counter == 1000000) {
+				return 1000;
+			}
+		};
+		int duration = TIM1->CNT;					//in us
+		int distance = (duration * 343) / 20000;
+		return distance;
+
+	}
+
 }
