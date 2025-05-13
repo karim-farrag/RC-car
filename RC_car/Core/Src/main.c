@@ -7,20 +7,42 @@ void PWM_Config2();
 void delay_us(int us);
 int UltraSonic_GetDistance(int sensorId);
 void DcMotor_Control(int motorId, int direction, int speed);
+float kp = 0.5;
+float kd = 0.1;
+int speed = 35;
 
 int main() {
 	Set_up();
 
 	while (1) {
-		int s = UltraSonic_GetDistance(1);
-		if (s>=0 && s<=400){
-			DcMotor_Control(1, 1, s/4);
-		}
-		else{
-			DcMotor_Control(1, 1, 0);
-		}
 
+		if ((GPIOB->IDR & (1 << 4)) == 0) {
+			int right_reference = UltraSonic_GetDistance(1);
+			int left_reference = UltraSonic_GetDistance(2);
+			int prev_right_error = 0;
+			int prev_left_error = 0;
 
+			while (1) {
+				int right_error = right_reference - UltraSonic_GetDistance(1);
+				int left_error = left_reference - UltraSonic_GetDistance(2);
+
+				int right_speed = speed
+						+ ((kp * right_error)
+								+ (kd * (prev_right_error - right_error)));
+				int left_speed = speed
+						- ((kp * right_error)
+								+ (kd * (prev_right_error - right_error)));
+
+				prev_right_error = right_error;
+				prev_left_error = left_error;
+
+				DcMotor_Control(1, 1, right_speed);
+				DcMotor_Control(2, 1, left_speed);
+
+				delay100ms();
+			}
+
+		}
 	}
 }
 
@@ -38,15 +60,16 @@ void Set_up() {
 	AFIO->MAPR &= ~(1 << 8);     // No remap
 
 	// === GPIO Configuration ===
-	GPIOA->CRL = 0x4B44444B;		//PA0 output motor1
-									//PA6 output motor2
+	GPIOA->CRL = 0x4B44444B;		//PA0 output PWM motor1
+									//PA6 output PWM motor2
 	GPIOA->CRH = 0x44443344;//PA10-PA11 output push-pull for the dir. of motor1
-	GPIOB->CRL = 0x44444444;
+	GPIOB->CRL = 0x44484444;			//PB4 input pull up ( for start button)
 	GPIOB->CRH = 0x34343344;//PB10-PB11 output push-pull for the dir. of motor2
 							//PB12 input floating ( ultrasonic1 echo )
 							//PB13 output push-pull ( ultrasonic1 trig )
 							//PB14 input floating ( ultrasonic2 echo )
 							//PB15 output push-pull ( ultrasonic2 trig )
+	GPIOB->ODR |= (1 << 4);
 
 	PWM_Config1();
 	PWM_Config2();
@@ -54,6 +77,9 @@ void Set_up() {
 }
 
 void DcMotor_Control(int motorId, int direction, int speed) {
+	if (speed > 100 || speed < 0) {
+		return;
+	}
 
 	if (motorId == 1) {							// left motor
 		if (direction == 1) {					//clockwise
@@ -79,6 +105,7 @@ void DcMotor_Control(int motorId, int direction, int speed) {
 }
 
 void delay100ms() {       //100ms
+	TIM1->CNT = 0;
 	TIM1->PSC = 9999;
 	TIM1->ARR = 79;
 	TIM1->SR = 0;
@@ -123,63 +150,48 @@ void PWM_Config2() {
 	TIM3->CR1 |= (1 << 0); 					// Start TIM3
 }
 
+//output distance in CM
 int UltraSonic_GetDistance(int sensorId) {
+	int trigPin, echoPin;
 
 	if (sensorId == 1) {
-		GPIOB->ODR |= (1 << 13);			//trig1 ON
-		delay_us(10);
-		GPIOB->ODR &= ~(1 << 13);			//trig1 OFF
-		TIM1->PSC = 8 - 1;
-		TIM1->CNT = 0;
-		int counter = 0;
-
-		while (!(GPIOB->IDR & (1 << 12))) {
-			counter++;
-			if (counter == 1000000) {
-				return 1000;
-			}
-		};
-		TIM1->CR1 |= (1 << 0);
-		counter = 0;
-		while ((GPIOB->IDR & (1 << 12))) {
-			counter++;
-			if (counter == 1000000) {
-				return 1000;
-			}
-		};
-		int duration = TIM1->CNT;					//in us
-		int distance = (duration * 343) / 20000;
-		TIM1->CR1 = 0;
-		return distance;
-
+		trigPin = 13; // PB13
+		echoPin = 12; // PB12
+	} else {
+		trigPin = 15; // PB15
+		echoPin = 14; // PB14
 	}
 
-	else {
-		GPIOB->ODR |= (1 << 15);
-		delay_us(10);
-		GPIOB->ODR &= ~(1 << 15);
-		TIM1->PSC = 8 - 1;
-		TIM1->CNT = 0;
-		int counter = 0;
+	// Send trigger pulse
+	GPIOB->ODR |= (1 << trigPin);
+	delay_us(10);
+	GPIOB->ODR &= ~(1 << trigPin);
 
-		while (!(GPIOB->IDR & (1 << 14))) {
-			counter++;
-			if (counter == 1000000) {
-				return 1000;
-			}
-		};
-		TIM1->CR1 |= (1 << 0);
-		counter = 0;
-		while ((GPIOB->IDR & (1 << 14))) {
-			counter++;
-			if (counter == 1000000) {
-				return 1000;
-			}
-		};
-		int duration = TIM1->CNT;					//in us
-		int distance = (duration * 343) / 20000;
-		return distance;
+	// Prepare timer
+	TIM1->PSC = 8 - 1;   // 1 MHz -> 1us resolution
+	TIM1->ARR = 65535;
+	TIM1->CNT = 0;
 
-	}
+	// Wait for echo to go high with timeout
+	int timeout = 30000; // 30 ms max wait
+	while (!(GPIOB->IDR & (1 << echoPin)) && --timeout)
+		;
+	if (timeout == 0)
+		return -1; // Timeout error
 
+	TIM1->CR1 |= (1 << 0); // Start timer
+
+	timeout = 30000; // Reset timeout
+	while ((GPIOB->IDR & (1 << echoPin)) && --timeout)
+		;
+	TIM1->CR1 = 0;
+
+	if (timeout == 0)
+		return -1; // Timeout error
+
+	int duration_us = TIM1->CNT;
+	int distance_cm = duration_us / 58;
+
+	return distance_cm;
 }
+
